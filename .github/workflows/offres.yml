@@ -1,0 +1,41 @@
+name: Offres cyber
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # toutes les 30 minutes
+  workflow_dispatch:          # bouton pour lancer le bot a la main
+
+permissions:
+  contents: write             # pour enregistrer la liste des offres deja publiees
+
+concurrency:
+  group: offres-cyber         # jamais deux passages en meme temps
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - run: python bot_offres.py
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          JOOBLE_KEY: ${{ secrets.JOOBLE_KEY }}
+          FT_CLIENT_ID: ${{ secrets.FT_CLIENT_ID }}
+          FT_CLIENT_SECRET: ${{ secrets.FT_CLIENT_SECRET }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          ZONE: "France"   # ou "Ile-de-France" pour limiter a la region
+          FT_REGION: "11"
+      - name: Enregistrer les offres deja publiees
+        run: |
+          if [ -f deja_publiees.json ] && [ -n "$(git status --porcelain deja_publiees.json)" ]; then
+            git config user.name "bot-offres"
+            git config user.email "bot-offres@users.noreply.github.com"
+            git add deja_publiees.json
+            git commit -m "Mise a jour des offres publiees"
+            git push
+          fi
