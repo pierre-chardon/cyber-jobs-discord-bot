@@ -15,27 +15,27 @@ jobs:
   publier:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install requests
       - run: python bot_offres.py
         env:
+          # France
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          JOOBLE_KEY: ${{ secrets.JOOBLE_KEY }}
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
-          JOOBLE_KEY: ${{ secrets.JOOBLE_KEY }}
           FT_CLIENT_ID: ${{ secrets.FT_CLIENT_ID }}
           FT_CLIENT_SECRET: ${{ secrets.FT_CLIENT_SECRET }}
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           ZONE: "France"   # ou "Ile-de-France" pour limiter a la region
           FT_REGION: "11"
+          # Suisse
+          DISCORD_WEBHOOK_CH: ${{ secrets.DISCORD_WEBHOOK_CH }}
+          JOOBLE_KEY_CH: ${{ secrets.JOOBLE_KEY_CH }}
+          ZONE_CH: "Schweiz"
       - name: Enregistrer les offres deja publiees
         run: |
-          if [ -f deja_publiees.json ] && [ -n "$(git status --porcelain deja_publiees.json)" ]; then
-            git config user.name "bot-offres"
-            git config user.email "bot-offres@users.noreply.github.com"
-            git add deja_publiees.json
-            git commit -m "Mise a jour des offres publiees"
-            git push
-          fi
+          git add deja_publiees*.json 2>/dev/null || true
+          if [ -n "$(git diff --cached --name-only)" ]; then
