@@ -94,7 +94,9 @@ PAYS = {
 # ---------------------------------------------------------------- utilitaires
 
 def env(nom, defaut=None):
-    return os.environ.get(nom, defaut)
+    # .strip() : enleve les espaces ou retours a la ligne copies avec une cle.
+    valeur = (os.environ.get(nom) or "").strip()
+    return valeur or defaut
 
 
 def get_json(urls):
