@@ -1,0 +1,17 @@
+name: Test zones Jooble Suisse
+
+on:
+  workflow_dispatch:   # lancement manuel uniquement
+
+jobs:
+  tester:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - run: python test/test_zones_jooble.py
+        env:
+          JOOBLE_KEY_CH: ${{ secrets.JOOBLE_KEY_CH }}
