@@ -37,5 +37,17 @@ jobs:
           ZONE_CH: "Schweiz"
       - name: Enregistrer les offres deja publiees
         run: |
-          git add deja_publiees*.json 2>/dev/null || true
+          # On met la memoire de cote, on recupere la derniere version du depot
+          # (au cas ou un fichier a ete modifie pendant le passage), puis on la remet.
+          mkdir -p /tmp/memoire
+          cp deja_publiees*.json /tmp/memoire/ 2>/dev/null || exit 0
+          git fetch origin main
+          git reset --hard origin/main
+          cp /tmp/memoire/*.json .
+          git add deja_publiees*.json
           if [ -n "$(git diff --cached --name-only)" ]; then
+            git config user.name "bot-offres"
+            git config user.email "bot-offres@users.noreply.github.com"
+            git commit -m "Mise a jour des offres publiees"
+            git push
+          fi
