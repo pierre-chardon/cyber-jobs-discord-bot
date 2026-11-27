@@ -2,21 +2,24 @@
 Bot d'offres cyber pour Discord.
 
 Toutes les 30 minutes, cherche les nouvelles offres en cybersecurite et en
-architecture / ingenierie reseau, puis les publie dans un salon Discord via un
-webhook. Les offres deja vues sont memorisees dans deja_publiees.json.
+architecture / ingenierie reseau, pour la France et la Suisse, puis les publie
+chacune dans son salon Discord via un webhook. Chaque pays a sa propre memoire
+des offres deja vues (deja_publiees.json, deja_publiees_ch.json).
+
+Un pays n'est traite que si son webhook est defini :
+  France : DISCORD_WEBHOOK      Suisse : DISCORD_WEBHOOK_CH
 
 Sources (chacune s'active si ses cles sont definies) :
-  - pages carriere Lever et Greenhouse (voir entreprises.json), toujours actives
-  - Adzuna (agregateur)        : ADZUNA_APP_ID et ADZUNA_APP_KEY
-  - Jooble (agregateur)        : JOOBLE_KEY (100 recherches par jour : 3 recherches
-                                 une fois par heure, soit 72 par jour)
-  - Adzuna est payant : laisser ses cles vides pour le desactiver
-  - France Travail             : FT_CLIENT_ID et FT_CLIENT_SECRET
+  - pages carriere Lever et Greenhouse (voir entreprises.json), les deux pays
+  - Jooble (agregateur) : JOOBLE_KEY (France), JOOBLE_KEY_CH (Suisse).
+    100 recherches par jour et par cle : 3 recherches une fois par heure = 72.
+  - Adzuna (payant, France)    : ADZUNA_APP_ID et ADZUNA_APP_KEY
+  - France Travail (France)    : FT_CLIENT_ID et FT_CLIENT_SECRET
 
 Variables d'environnement :
-  DISCORD_WEBHOOK    adresse du webhook du salon Discord (obligatoire)
-  ZONE               zone de recherche des agregateurs (defaut "France" ;
+  ZONE               zone Jooble/Adzuna en France (defaut "France" ;
                      "Ile-de-France" pour limiter a la region)
+  ZONE_CH            zone Jooble en Suisse (defaut "Schweiz")
   FT_REGION          code region France Travail (11 = Ile-de-France)
   MAX_OFFRES         nombre maximum d'offres publiees par passage (defaut 10)
   DRY_RUN            "1" pour afficher les offres sans rien publier ni memoriser
@@ -32,7 +35,6 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 FICHIER_ENTREPRISES = "entreprises.json"
-FICHIER_MEMOIRE = "deja_publiees.json"
 OUBLI_JOURS = 60  # on oublie les offres vues il y a plus de 60 jours
 COULEUR = 0x5CC8E6
 ENTETES = {"User-Agent": "bot-offres-cyber-discord/1.0"}
@@ -43,7 +45,10 @@ FILTRE_INTITULE = re.compile(
     r"|\bsoc\b|secops|pentest|penetration|test d.intrusion|siem|\bgrc\b|rssi|ciso|"
     r"threat|forensic|vuln[ée]rabilit|\bcti\b|\bssi\b|purple|blue team|red team|"
     r"(ing[ée]nieur|architecte|administrateur|technicien|engineer|architect|admin)\w*"
-    r"[^,;]{0,25}(r[ée]seau|network)|network (engineer|architect|admin)",
+    r"[^,;]{0,25}(r[ée]seau|network)|network (engineer|architect|admin)|"
+    # allemand (Suisse alemanique)
+    r"sicherheit|netzwerk\w*[- ]?(ingenieur|engineer|architekt|administrator|spezialist|techniker)|"
+    r"(ingenieur|architekt|administrator|spezialist|techniker)\w*[^,;]{0,25}netzwerk",
     re.IGNORECASE,
 )
 
@@ -54,14 +59,36 @@ RECHERCHES_ADZUNA = [
     {"what": "architecte réseau"},
     {"what": "ingénieur réseau"},
 ]
-RECHERCHES_JOOBLE = ["cybersécurité", "sécurité informatique", "ingénieur réseau"]
-
-# Lieux acceptes pour les offres des entreprises (France ou teletravail).
-FILTRE_LIEU = re.compile(
-    r"france|paris|[iî]le-de-france|lyon|lille|nantes|rennes|toulouse|bordeaux|"
-    r"marseille|montpellier|grenoble|sophia|nice|strasbourg|remote|t[ée]l[ée]travail",
-    re.IGNORECASE,
-)
+# Reglages par pays. Les lieux servent a trier les offres des pages carriere.
+PAYS = {
+    "fr": {
+        "nom": "France",
+        "webhook": "DISCORD_WEBHOOK",
+        "memoire": "deja_publiees.json",
+        "jooble_cle": "JOOBLE_KEY",
+        "jooble_domaines": ["fr.jooble.org", "jooble.org"],
+        "jooble_zone": ("ZONE", "France"),
+        "jooble_recherches": ["cybersécurité", "sécurité informatique", "ingénieur réseau"],
+        "lieux": re.compile(
+            r"france|paris|[iî]le-de-france|lyon|lille|nantes|rennes|toulouse|bordeaux|"
+            r"marseille|montpellier|grenoble|sophia|nice|strasbourg|remote|t[ée]l[ée]travail",
+            re.IGNORECASE),
+    },
+    "ch": {
+        "nom": "Suisse",
+        "webhook": "DISCORD_WEBHOOK_CH",
+        "memoire": "deja_publiees_ch.json",
+        "jooble_cle": "JOOBLE_KEY_CH",
+        "jooble_domaines": ["ch.jooble.org", "jooble.org"],
+        "jooble_zone": ("ZONE_CH", "Schweiz"),
+        "jooble_recherches": ["cyber security", "cybersécurité", "Informationssicherheit"],
+        "lieux": re.compile(
+            r"suisse|switzerland|schweiz|svizzera|z[uü]rich|gen[eè]v|geneva|genf|lausanne|"
+            r"\bbern|berne|basel|b[aâ]le|lugano|\bzug\b|winterthur|neuch[aâ]tel|fribourg|"
+            r"\bsion\b|lucerne|luzern|st\.? ?gall",
+            re.IGNORECASE),
+    },
+}
 
 
 # ---------------------------------------------------------------- utilitaires
@@ -92,10 +119,10 @@ def charger_json(chemin, defaut):
         return defaut
 
 
-def sauver_memoire(memoire):
+def sauver_memoire(memoire, chemin):
     limite = (datetime.now(timezone.utc) - timedelta(days=OUBLI_JOURS)).isoformat()
     memoire = {k: v for k, v in memoire.items() if v >= limite}
-    with open(FICHIER_MEMOIRE, "w", encoding="utf-8") as f:
+    with open(chemin, "w", encoding="utf-8") as f:
         json.dump(memoire, f, indent=0, sort_keys=True)
 
 
@@ -142,15 +169,23 @@ def depuis_greenhouse(token, nom):
 
 
 def depuis_france_travail(client_id, client_secret, region):
-    jeton = requests.post(
-        "https://entreprise.francetravail.fr/connexion/oauth2/access_token",
-        params={"realm": "/partenaire"},
-        data={"grant_type": "client_credentials", "client_id": client_id,
-              "client_secret": client_secret, "scope": "api_offresdemploiv2 o2dsoffre"},
-        timeout=30,
-    )
-    jeton.raise_for_status()
-    token = jeton.json()["access_token"]
+    # Nouvelle adresse d'authentification d'abord, ancienne en secours.
+    token = None
+    for base in ("https://authentification-partenaire.francetravail.io",
+                 "https://entreprise.francetravail.fr"):
+        jeton = requests.post(
+            f"{base}/connexion/oauth2/access_token",
+            params={"realm": "/partenaire"},
+            data={"grant_type": "client_credentials", "client_id": client_id,
+                  "client_secret": client_secret, "scope": "api_offresdemploiv2 o2dsoffre"},
+            timeout=30,
+        )
+        if jeton.status_code == 200:
+            token = jeton.json()["access_token"]
+            break
+        print(f"  Jeton France Travail ({base}) : code {jeton.status_code}")
+    if not token:
+        return []
     fin = datetime.now(timezone.utc).replace(microsecond=0)
     debut = fin - timedelta(hours=48)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
@@ -208,12 +243,12 @@ def depuis_adzuna(app_id, app_key, zone):
     return resultats
 
 
-def depuis_jooble(cle, zone):
+def depuis_jooble(cle, zone, recherches, domaines, pays):
     resultats = []
-    for mots in RECHERCHES_JOOBLE:
-        corps = {"keywords": mots, "location": zone or "France", "ResultOnPage": 50}
+    for mots in recherches:
+        corps = {"keywords": mots, "location": zone, "ResultOnPage": 50}
         donnees = None
-        for domaine in ("fr.jooble.org", "jooble.org"):
+        for domaine in domaines:
             try:
                 r = requests.post(f"https://{domaine}/api/{cle}", json=corps,
                                   headers=ENTETES, timeout=30)
@@ -226,7 +261,7 @@ def depuis_jooble(cle, zone):
             print(f"  Jooble ({domaine}) : code {r.status_code}")
         for j in (donnees or {}).get("jobs", []):
             resultats.append(offre(
-                f"jooble:{j.get('id')}", j.get("title", ""), j.get("link"),
+                (f"jooble:{j.get('id')}" if pays == "fr" else f"jooble-{pays}:{j.get('id')}"), j.get("title", ""), j.get("link"),
                 j.get("company") or "Non précisée", j.get("location"), j.get("type"),
                 j.get("updated"), "Jooble"))
     return resultats
@@ -273,40 +308,37 @@ def publier(webhook, embeds):
 
 # ---------------------------------------------------------------- programme
 
-def main():
-    dry_run = env("DRY_RUN", "0") == "1"
-    webhook = env("DISCORD_WEBHOOK")
+def traiter_pays(code, conf, offres_entreprises, dry_run, max_offres):
+    webhook = env(conf["webhook"])
     if not webhook and not dry_run:
-        sys.exit("Variable manquante : DISCORD_WEBHOOK")
-    max_offres = int(env("MAX_OFFRES", "10"))
+        return  # pays non active
+    print(f"\n=== {conf['nom']} ===")
+    chemin = conf["memoire"]
+    premiere_fois = not os.path.exists(chemin)
+    memoire = charger_json(chemin, {})
 
-    entreprises = charger_json(FICHIER_ENTREPRISES, {})
-    premiere_fois = not os.path.exists(FICHIER_MEMOIRE)
-    memoire = charger_json(FICHIER_MEMOIRE, {})
+    toutes = [o for o in offres_entreprises if conf["lieux"].search(o["lieu"])]
+    zone = env(*conf["jooble_zone"])
 
-    toutes = []
-    for slug, nom in entreprises.get("lever", {}).items():
-        print(f"Lever : {nom}")
-        toutes += [o for o in depuis_lever(slug, nom) if FILTRE_LIEU.search(o["lieu"])]
-    for token, nom in entreprises.get("greenhouse", {}).items():
-        print(f"Greenhouse : {nom}")
-        toutes += [o for o in depuis_greenhouse(token, nom) if FILTRE_LIEU.search(o["lieu"])]
-    zone = env("ZONE", "France")
-    if env("ADZUNA_APP_ID") and env("ADZUNA_APP_KEY"):
-        print("Adzuna")
-        toutes += depuis_adzuna(env("ADZUNA_APP_ID"), env("ADZUNA_APP_KEY"), zone)
     # Jooble : une fois par heure seulement (passage de la premiere demi-heure),
     # pour rester sous la limite gratuite de 100 recherches par jour.
-    if env("JOOBLE_KEY") and (datetime.now(timezone.utc).minute < 30 or premiere_fois):
+    cle_jooble = env(conf["jooble_cle"])
+    if cle_jooble and (datetime.now(timezone.utc).minute < 30 or premiere_fois):
         print("Jooble")
-        toutes += depuis_jooble(env("JOOBLE_KEY"), zone)
-    if env("FT_CLIENT_ID") and env("FT_CLIENT_SECRET"):
-        print("France Travail")
-        try:
-            toutes += depuis_france_travail(env("FT_CLIENT_ID"), env("FT_CLIENT_SECRET"),
-                                            env("FT_REGION", "11"))
-        except requests.RequestException as erreur:
-            print(f"  France Travail indisponible : {erreur}")
+        toutes += depuis_jooble(cle_jooble, zone, conf["jooble_recherches"],
+                                conf["jooble_domaines"], code)
+
+    if code == "fr":
+        if env("ADZUNA_APP_ID") and env("ADZUNA_APP_KEY"):
+            print("Adzuna")
+            toutes += depuis_adzuna(env("ADZUNA_APP_ID"), env("ADZUNA_APP_KEY"), zone)
+        if env("FT_CLIENT_ID") and env("FT_CLIENT_SECRET"):
+            print("France Travail")
+            try:
+                toutes += depuis_france_travail(env("FT_CLIENT_ID"), env("FT_CLIENT_SECRET"),
+                                                env("FT_REGION", "11"))
+            except requests.RequestException as erreur:
+                print(f"  France Travail indisponible : {erreur}")
 
     cyber = {o["cle"]: o for o in toutes if FILTRE_INTITULE.search(o["titre"])}
     # On ecarte aussi une offre deja publiee sous un autre site (meme intitule et entreprise).
@@ -319,7 +351,7 @@ def main():
             continue
         signatures.add(sig)
         nouvelles.append(o)
-    print(f"{len(cyber)} offre(s) cyber suivie(s), dont {len(nouvelles)} nouvelle(s).")
+    print(f"{len(cyber)} offre(s) suivie(s), dont {len(nouvelles)} nouvelle(s).")
 
     if dry_run:
         for o in nouvelles:
@@ -334,23 +366,43 @@ def main():
         for cle, o in cyber.items():
             memoire[cle] = maintenant
             memoire["sig:" + signature(o)] = maintenant
-        sauver_memoire(memoire)
+        sauver_memoire(memoire, chemin)
         envoyer(webhook, {"username": "Offres cyber", "content":
-                f"✅ Bot d'offres en place : {len(cyber)} offre(s) cyber et réseau actuellement "
-                "suivie(s). Les nouvelles offres seront publiées ici dès leur mise en ligne."})
+                f"✅ Bot d'offres en place ({conf['nom']}) : {len(cyber)} offre(s) cyber et "
+                "réseau actuellement suivie(s). Les nouvelles offres seront publiées ici "
+                "dès leur mise en ligne."})
         return
 
     if not nouvelles:
-        sauver_memoire(memoire)
+        sauver_memoire(memoire, chemin)
         return
 
     nouvelles.sort(key=lambda o: o.get("date") or "")
-    a_publier = nouvelles[-max_offres:]
-    publier(webhook, [en_embed(o) for o in a_publier])
+    publier(webhook, [en_embed(o) for o in nouvelles[-max_offres:]])
     for o in nouvelles:  # memorise aussi celles ecartees par la limite
         memoire[o["cle"]] = maintenant
         memoire["sig:" + signature(o)] = maintenant
-    sauver_memoire(memoire)
+    sauver_memoire(memoire, chemin)
+
+
+def main():
+    dry_run = env("DRY_RUN", "0") == "1"
+    if not dry_run and not any(env(c["webhook"]) for c in PAYS.values()):
+        sys.exit("Aucun webhook defini (DISCORD_WEBHOOK ou DISCORD_WEBHOOK_CH).")
+    max_offres = int(env("MAX_OFFRES", "10"))
+
+    # Pages carriere : lues une seule fois, puis triees par pays selon le lieu.
+    entreprises = charger_json(FICHIER_ENTREPRISES, {})
+    offres_entreprises = []
+    for slug, nom in entreprises.get("lever", {}).items():
+        print(f"Lever : {nom}")
+        offres_entreprises += depuis_lever(slug, nom)
+    for token, nom in entreprises.get("greenhouse", {}).items():
+        print(f"Greenhouse : {nom}")
+        offres_entreprises += depuis_greenhouse(token, nom)
+
+    for code, conf in PAYS.items():
+        traiter_pays(code, conf, offres_entreprises, dry_run, max_offres)
 
 
 if __name__ == "__main__":
