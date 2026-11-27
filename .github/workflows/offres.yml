@@ -2,7 +2,7 @@ name: Offres cyber
 
 on:
   schedule:
-    - cron: "*/30 * * * *"   # toutes les 30 minutes
+    - cron: "7,37 * * * *"   # toutes les 30 minutes, a :07 et :37 (creneaux moins charges)
   workflow_dispatch:          # bouton pour lancer le bot a la main
 
 permissions:
