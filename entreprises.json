@@ -1,7 +1,6 @@
 {
   "_aide": "Ajoutez une entreprise : son identifiant est le mot qui suit jobs.lever.co/ (Lever) ou job-boards.greenhouse.io/ (Greenhouse) dans l'adresse de ses offres.",
   "lever": {
-    "mistral": "Mistral AI",
     "scaleway": "Scaleway",
     "didomi": "Didomi",
     "malt": "Malt",
